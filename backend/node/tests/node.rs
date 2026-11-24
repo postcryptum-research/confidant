@@ -2288,3 +2288,111 @@ async fn proof_of_funds_endpoint_is_read_only_bounded_and_judges_the_challenge()
     assert_eq!(snap(&n), before, "the whole exercise mutated nothing");
     assert_eq!(n.log(0).len(), 2);
 }
+
+/// Like `call`, but with a raw body and content type: for inputs a JSON value cannot express
+/// (invalid UTF-8, truncated JSON, oversized bodies, a non-JSON content type).
+async fn call_raw(
+    app: &axum::Router,
+    method: &str,
+    path: &str,
+    content_type: &str,
+    body: Vec<u8>,
+) -> StatusCode {
+    let req = Request::builder()
+        .method(method)
+        .uri(path)
+        .header("content-type", content_type)
+        .body(Body::from(body))
+        .unwrap();
+    app.clone().oneshot(req).await.unwrap().status()
+}
+
+/// Web-robustness sweep (ticket "Self-security", part 3): every route takes malformed, mistyped,
+/// oversized, invalid-UTF-8 and wrong-method input without a panic or a 5xx, and the pool state is
+/// byte-identical afterwards. A 5xx here would be a crash surface reachable from the internet
+/// through nginx; a panic inside a handler would poison the verifier lock for every later caller.
+#[tokio::test]
+async fn http_surface_survives_malformed_oversized_and_mistyped_input_without_5xx_or_state_change()
+{
+    let ledger = FakeLedger::default();
+    *ledger.validated.lock().unwrap() = 5_000;
+    let app = http::router(Arc::new(node(&ledger)));
+    let (_, before) = call(&app, "GET", "/state", None).await;
+    let posts = [
+        "/submit/shield",
+        "/submit/transfer",
+        "/submit/unshield",
+        "/endorse",
+        "/anchored",
+        "/audit/reveal",
+        "/pof/verify",
+        "/fees/swept",
+    ];
+    let deep = {
+        let mut s = String::new();
+        for _ in 0..2_000 {
+            s.push('[');
+        }
+        for _ in 0..2_000 {
+            s.push(']');
+        }
+        s
+    };
+    let bodies: Vec<(&str, Vec<u8>)> = vec![
+        ("empty", Vec::new()),
+        ("null", b"null".to_vec()),
+        ("array", b"[]".to_vec()),
+        ("object", b"{}".to_vec()),
+        ("string", b"\"x\"".to_vec()),
+        ("number", b"1e400".to_vec()),
+        ("truncated", b"{\"record\": {\"index\": 0, \"op\": \"shi".to_vec()),
+        ("invalid utf-8", vec![0xff, 0xfe, b'{', b'}', 0xc0]),
+        ("deeply nested", deep.into_bytes()),
+        (
+            "wrong types",
+            br#"{"record":"no","depositTxHash":5,"destination":[],"root":{},"anchorTxHash":null,"viewingKey":1,"amount":"a","challenge":"b","credential":"yes","txHash":[]}"#.to_vec(),
+        ),
+        (
+            "huge numbers",
+            br#"{"record":{"index":18446744073709551615,"op":"shield","timestamp":18446744073709551615,"external":"","anchor":"","flags":255,"valueBalance":-9223372036854775808,"firstLeaf":18446744073709551615,"actions":[],"proof":"","bindingSignature":""},"amount":18446744073709551615,"challenge":{"borrower":"r","lender":"l","ledgerIndex":18446744073709551615,"expiry":0}}"#.to_vec(),
+        ),
+        ("long strings", format!("{{\"record\":{{\"index\":0,\"op\":\"shield\",\"timestamp\":0,\"external\":\"{}\",\"anchor\":\"{}\",\"flags\":0,\"valueBalance\":0,\"firstLeaf\":0,\"actions\":[],\"proof\":\"{}\",\"bindingSignature\":\"\"}},\"destination\":\"{}\",\"viewingKey\":\"{}\",\"txHash\":\"{}\"}}", "x".repeat(10_000), "f".repeat(10_000), "0".repeat(100_000), "r".repeat(5_000), "a".repeat(10_000), "0".repeat(10_000)).into_bytes()),
+        ("oversized 3 MiB", vec![b'['; 3 * 1024 * 1024]),
+    ];
+    for path in posts {
+        for (name, body) in &bodies {
+            let status = call_raw(&app, "POST", path, "application/json", body.clone()).await;
+            assert!(
+                !status.is_server_error(),
+                "{path} with {name} body: {status} (a 5xx is a crash surface)"
+            );
+        }
+        let status = call_raw(&app, "POST", path, "text/plain", b"{}".to_vec()).await;
+        assert!(
+            !status.is_server_error(),
+            "{path} with a non-JSON content type: {status}"
+        );
+        let status = call_raw(&app, "GET", path, "application/json", Vec::new()).await;
+        assert!(!status.is_server_error(), "{path} with GET: {status}");
+    }
+    for path in [
+        "/state",
+        "/log?from=-1",
+        "/log?from=18446744073709551615",
+        "/log?from=x",
+        "/fees",
+        "/policy",
+        "/nope",
+        "/log?from=0&from=1",
+    ] {
+        let status = call_raw(&app, "GET", path, "application/json", Vec::new()).await;
+        assert!(!status.is_server_error(), "GET {path}: {status}");
+        let status = call_raw(&app, "DELETE", path, "application/json", Vec::new()).await;
+        assert!(!status.is_server_error(), "DELETE {path}: {status}");
+    }
+    let (_, after) = call(&app, "GET", "/state", None).await;
+    assert_eq!(
+        after, before,
+        "malformed input must not change the pool state"
+    );
+}

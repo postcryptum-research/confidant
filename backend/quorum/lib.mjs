@@ -30,7 +30,7 @@ export function serve(port, routes) {
         for await (const c of req) { size += c.length; if (size > MAX_BODY_BYTES) throw refuse(413, `body over ${MAX_BODY_BYTES} bytes`); chunks.push(c); }
         body = chunks.length ? JSON.parse(Buffer.concat(chunks).toString("utf8")) : {};
       }
-      const out = await handler(body, url);
+      const out = await handler(body, url, req);
       send(200, out);
     } catch (e) {
       send(e.status ?? 500, { error: e.message ?? String(e), ...(e.details ? { details: e.details } : {}) });
@@ -51,11 +51,11 @@ export function refuse(status, message, details) {
 
 /** JSON over HTTP. A failure *before any response* (socket reset while reusing an idle keep-alive
  *  connection, refused connection during startup) is retried once; an HTTP error is thrown as-is. */
-export async function http(method, url, body, { retries = 1 } = {}) {
+export async function http(method, url, body, { retries = 1, headers = {} } = {}) {
   for (let attempt = 0; ; attempt++) {
     let res;
     try {
-      res = await fetch(url, { method, headers: { "content-type": "application/json" }, body: body ? JSON.stringify(body) : undefined });
+      res = await fetch(url, { method, headers: { "content-type": "application/json", ...headers }, body: body ? JSON.stringify(body) : undefined });
     } catch (e) {
       if (attempt < retries) { await new Promise((r) => setTimeout(r, 200)); continue; }
       throw refuse(502, `${method} ${url}: ${e.cause?.code ?? e.cause?.message ?? e.message}`);

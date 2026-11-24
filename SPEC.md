@@ -446,7 +446,7 @@ Implemented in `backend/quorum/` (xrpl.js) and exercised by `e2e/testnet/run.mjs
   `payout.amount` — the unshield amount net of the protocol fee (XLS-56 Batch not used: anchor
   first, payout second).
 - **Treasury and fee sweep.** `setup-pool.mjs` funds a treasury account (`config.treasury`, default
-  25 bps on shield and unshield — `FEE_SHIELD_BPS` / `FEE_UNSHIELD_BPS`). `POST /fees/sweep` on the
+  25 bps on shield and unshield — `FEE_SHIELD_BPS` / `FEE_UNSHIELD_BPS`). `POST /fees/sweep` (operator-only: the coordinator's `OPERATOR_TOKEN` in `X-Operator-Token`, and nginx answers 403 for it from the internet) on the
   coordinator moves the accrued fees pool → treasury as a k-of-N Payment of kind `fee-sweep`, then
   reports the hash to every node (`POST /fees/swept`), which verify it on the ledger. Public facts for
   the UI in `GET /config.fees {shieldBps, unshieldBps, treasury}`.

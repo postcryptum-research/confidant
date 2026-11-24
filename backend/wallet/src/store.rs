@@ -14,10 +14,15 @@ pub trait LogSource: Send + Sync {
     fn log(&self) -> impl Future<Output = Result<Vec<BundleRecord>, String>> + Send;
 }
 
+/// Wallets the demo service holds at most, unless `Store::with_capacity` says otherwise.
+pub const DEFAULT_CAPACITY: usize = 1_000;
+
 #[derive(Debug, thiserror::Error)]
 pub enum StoreError {
     #[error("no such wallet")]
     NotFound,
+    #[error("wallet store is full ({0} wallets): the demo wallet service takes no more")]
+    Full(usize),
     #[error(transparent)]
     Core(#[from] CoreError),
     #[error("log source: {0}")]
@@ -48,6 +53,9 @@ pub struct Store<L: LogSource> {
     dir: PathBuf,
     log: L,
     wallets: Mutex<HashMap<String, Wallet>>,
+    /// Most wallets the store will hold; `create` refuses beyond it (an internet-facing demo
+    /// service must not let anyone fill the disk with key files).
+    capacity: usize,
 }
 
 fn io(e: impl std::fmt::Display) -> StoreError {
@@ -76,6 +84,7 @@ impl<L: LogSource> Store<L> {
             dir,
             log,
             wallets: Mutex::new(wallets),
+            capacity: DEFAULT_CAPACITY,
         })
     }
 
@@ -95,8 +104,21 @@ impl<L: LogSource> Store<L> {
         self.dir.join(format!("{id}.wallet.json"))
     }
 
+    /// Bounds the number of wallets (at least one); the default is `DEFAULT_CAPACITY`.
+    pub fn with_capacity(mut self, capacity: usize) -> Self {
+        self.capacity = capacity.max(1);
+        self
+    }
+
+    pub fn capacity(&self) -> usize {
+        self.capacity
+    }
+
     /// A new wallet with a fresh spending key, persisted 0600 under a random bearer id.
     pub fn create(&self) -> Result<WalletSummary, StoreError> {
+        if self.lock().len() >= self.capacity {
+            return Err(StoreError::Full(self.capacity));
+        }
         let mut raw = [0u8; 16];
         rand::rngs::OsRng.fill_bytes(&mut raw);
         let id = hex::encode(raw);

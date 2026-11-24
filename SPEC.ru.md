@@ -449,7 +449,7 @@ shield'у, депозит которого отправлен с адреса и
   `payout.amount` — сумма unshield за вычетом протокольной комиссии (Batch XLS-56 не используется:
   сначала анкор, затем выплата).
 - **Казна и перевод комиссий.** `setup-pool.mjs` создаёт аккаунт казны (`config.treasury`, по
-  умолчанию 25 bps на shield и unshield — `FEE_SHIELD_BPS` / `FEE_UNSHIELD_BPS`). `POST /fees/sweep`
+  умолчанию 25 bps на shield и unshield — `FEE_SHIELD_BPS` / `FEE_UNSHIELD_BPS`). `POST /fees/sweep` (только оператор: `OPERATOR_TOKEN` координатора в `X-Operator-Token`; снаружи nginx отвечает 403)
   у координатора переводит накопленные комиссии пул → казна k-of-N Payment'ом вида `fee-sweep`, затем
   сообщает хеш всем узлам (`POST /fees/swept`), которые проверяют его по леджеру. Публичные факты для
   UI — в `GET /config.fees {shieldBps, unshieldBps, treasury}`.

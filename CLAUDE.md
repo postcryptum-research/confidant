@@ -92,6 +92,7 @@ cargo llvm-cov -p confidant-node --all-targets --ignore-filename-regex '(main|rp
 cargo build --release --example cli --bin confidant-node
 (cd e2e/testnet && npm install && CLI=../../target/release/examples/cli npm run e2e)             # CLI-driven
 (cd backend/quorum && npm install) && (cd e2e/testnet && CLI=../../target/release/examples/cli NODE_BIN=../../target/release/confidant-node npm run e2e:services)  # through backend/
+(cd core && cargo +nightly fuzz run memo_decode -- -max_total_time=120)          # fuzz harnesses: core/fuzz, backend/node/fuzz (cargo-fuzz, nightly)
 ```
 
 ## Where the strategy lives

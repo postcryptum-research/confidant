@@ -18,12 +18,20 @@
 //      QUORUM, POOL, SINK, XRPL_WS, PUBLIC_NODES (URLs a browser reaches the nodes at, for the
 //      proof-of-funds check that never goes through here; default /node/<i> on the UI origin).
 
+import { timingSafeEqual } from "node:crypto";
 import { Client, multisign } from "xrpl";
 import { DEFAULT_PAYOUT_LLS_WINDOW, DEFAULT_ANCHOR_LLS_WINDOW } from "./lib.mjs";
 const ANCHOR_LLS_OFFSET = Math.floor(DEFAULT_ANCHOR_LLS_WINDOW / 3); // 20 ledgers ≈ 80 s
 import { serve, http, refuse, memoOf, MEMO_ANCHOR, resilientClient } from "./lib.mjs";
 
 const env = process.env;
+function requireOperator(req) {
+  const expected = env.OPERATOR_TOKEN ?? "";
+  if (!expected) throw refuse(403, "fee sweep is closed: OPERATOR_TOKEN is not configured on the coordinator");
+  const given = String(req?.headers?.["x-operator-token"] ?? "");
+  const a = Buffer.from(given), b = Buffer.from(expected);
+  if (a.length !== b.length || !timingSafeEqual(a, b)) throw refuse(403, "fee sweep needs the operator token");
+}
 for (const k of ["PORT", "NODE_URL", "NODES", "SIGNERS", "QUORUM", "POOL", "SINK"]) {
   if (!env[k]) { console.error(`coordinator: need ${k}`); process.exit(2); }
 }
@@ -88,7 +96,11 @@ await serve(Number(env.PORT), {
   "GET /fees": async () => http("GET", `${env.NODE_URL}/fees`),
   // Moves accrued protocol fees from the pool account to the treasury: a multisigned Payment every
   // signer checks against its OWN node's fee ledger, then each node records the sweep it verified.
-  "POST /fees/sweep": async (body) => {
+  "POST /fees/sweep": async (body, _url, req) => {
+    // Operator-only (ticket "Self-security", part 3): the sweep is a value-moving action, so it
+    // needs the coordinator's OPERATOR_TOKEN in the X-Operator-Token header; with no token
+    // configured the route is closed. nginx additionally answers 403 for /api/fees/sweep.
+    requireOperator(req);
     const fees = await http("GET", `${env.NODE_URL}/fees`);
     if (!fees.treasury) throw refuse(409, "no treasury configured");
     const amount = Number(body?.amount ?? fees.available);

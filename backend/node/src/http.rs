@@ -148,6 +148,19 @@ pub fn router<L: Ledger + 'static>(node: Arc<Node<L>>) -> Router {
             post(pof_verify::<L>).layer(DefaultBodyLimit::max(POF_BODY_LIMIT)),
         )
         .route("/fees/swept", post(fee_swept::<L>))
+        // Ingress hardening (ticket "Self-security", part 3): a request that takes longer than
+        // `REQUEST_TIMEOUT` is cut (a ledger read that hangs never pins a worker); at most
+        // `MAX_IN_FLIGHT` requests are served at once (the rest wait in the accept queue instead of
+        // each taking the verifier lock in turn); a handler panic answers 500 and keeps the process
+        // (the verifier lock is poison-tolerant, so a panic cannot take the node down); bodies are
+        // capped at `BODY_LIMIT` on every route (the proof-of-funds route keeps its own, smaller cap).
+        .layer(DefaultBodyLimit::max(BODY_LIMIT))
+        .layer(tower_http::catch_panic::CatchPanicLayer::new())
+        .layer(tower_http::timeout::TimeoutLayer::with_status_code(
+            axum::http::StatusCode::REQUEST_TIMEOUT,
+            REQUEST_TIMEOUT,
+        ))
+        .layer(tower::limit::ConcurrencyLimitLayer::new(MAX_IN_FLIGHT))
         .with_state(node)
 }
 
@@ -157,6 +170,14 @@ async fn state<L: Ledger>(State(n): State<Arc<Node<L>>>) -> Json<confidant_core:
 
 /// Largest `POST /pof/verify` body accepted (a two-action record is ≈ 19 KB).
 pub const POF_BODY_LIMIT: usize = 256 * 1024;
+/// Largest request body any route accepts: a transfer record with eight recipients and its proof
+/// is well under 100 KiB; nginx caps bodies at 4 MiB in front of this.
+pub const BODY_LIMIT: usize = 1024 * 1024;
+/// A request is cut after this long: the slowest honest request is a submit whose deposit lookup
+/// waits on the ledger RPC, seconds at most.
+pub const REQUEST_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(60);
+/// Requests served concurrently; the rest queue at the socket instead of piling onto the lock.
+pub const MAX_IN_FLIGHT: usize = 64;
 
 /// `POST /pof/verify` body: the holder's proof record, the threshold and the lender's challenge.
 #[derive(Deserialize)]
