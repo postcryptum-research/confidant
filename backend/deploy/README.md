@@ -37,7 +37,7 @@ sudo ufw allow 8787/tcp
 Every node logs `pool custody verified on the ledger: k-of-N SignerList, master key disabled` or exits
 (the custody gate), then `fees: shield S bps, unshield U bps, treasury rT…; accrued/swept/available`
 (or `fees: OFF`). **Sweep accrued fees to the treasury** (k-of-N, verified on the ledger by every node):
-`curl -sX POST http://127.0.0.1:7900/fees/sweep -H 'content-type: application/json' -d '{}'`; check with
+`curl -sX POST http://127.0.0.1:7900/fees/sweep -H 'content-type: application/json' -H "X-Operator-Token: $(grep ^OPERATOR_TOKEN= /srv/confidant/env/coordinator.env | cut -d= -f2)" -d '{}'` (the token `render-env.mjs` wrote into `coordinator.env`; without it the coordinator answers 403, and nginx answers 403 for `/api/fees/sweep` from outside); check with
 `curl -s http://127.0.0.1:7900/fees`. The rates are fixed at the pool's genesis: a pool whose shields were
 bound with one policy cannot be replayed under another, so new rates mean a new pool (`setup-pool.mjs` again,
 fresh state files). Logs: `journalctl -u 'confidant-*' -f`. Restart everything:

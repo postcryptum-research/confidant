@@ -12,6 +12,13 @@ use serde::Deserialize;
 
 use crate::store::{Built, LogSource, Store, StoreError, WalletSummary};
 
+/// Largest body any wallet route accepts: a transfer request names up to eight recipients.
+pub const BODY_LIMIT: usize = 64 * 1024;
+/// A request is cut after this long (a sync or a proof is seconds; a hung log source is not).
+pub const REQUEST_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(120);
+/// Requests served concurrently; proving is CPU-bound, so the cap is small.
+pub const MAX_IN_FLIGHT: usize = 16;
+
 pub struct ApiError(pub StoreError);
 
 impl From<StoreError> for ApiError {
@@ -24,6 +31,7 @@ impl IntoResponse for ApiError {
     fn into_response(self) -> Response {
         let status = match &self.0 {
             StoreError::NotFound => StatusCode::NOT_FOUND,
+            StoreError::Full(_) => StatusCode::SERVICE_UNAVAILABLE,
             StoreError::Core(e) => match e {
                 CoreError::ZeroAmount
                 | CoreError::AmountOverflow
@@ -79,6 +87,15 @@ pub fn router<L: LogSource + 'static>(store: Arc<Store<L>>) -> Router {
         .route("/wallets/{id}/transfer", post(transfer::<L>))
         .route("/wallets/{id}/unshield", post(unshield::<L>))
         .route("/wallets/{id}/pof", post(pof::<L>))
+        // Ingress hardening (ticket "Self-security", part 3): small bodies, a request timeout, a
+        // concurrency cap, and a panic answered with 500 instead of a dropped connection.
+        .layer(axum::extract::DefaultBodyLimit::max(BODY_LIMIT))
+        .layer(tower_http::catch_panic::CatchPanicLayer::new())
+        .layer(tower_http::timeout::TimeoutLayer::with_status_code(
+            axum::http::StatusCode::REQUEST_TIMEOUT,
+            REQUEST_TIMEOUT,
+        ))
+        .layer(tower::limit::ConcurrencyLimitLayer::new(MAX_IN_FLIGHT))
         .with_state(store)
 }
 

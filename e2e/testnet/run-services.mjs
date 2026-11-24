@@ -25,6 +25,11 @@ import { mkdirSync, writeFileSync, readFileSync } from "node:fs";
 import { Client, Wallet, xrpToDrops, convertHexToString, decode, classicAddressToXAddress } from "xrpl";
 import { setupPool, launchQuorum, http, memoOf, MEMO_SHIELD, MEMO_ANCHOR, resilientClient } from "../../backend/quorum/lib.mjs";
 
+// The coordinator's fee sweep is operator-only: the harness sets the token the coordinator it
+// launches will require, and sends it on its sweeps.
+const OPERATOR_TOKEN = process.env.OPERATOR_TOKEN ?? "e2e-operator-token-not-a-secret";
+process.env.OPERATOR_TOKEN = OPERATOR_TOKEN;
+
 const XRPL_WS = process.env.XRPL_WS ?? "wss://s.altnet.rippletest.net:51233";
 const XRPL_RPC = process.env.XRPL_RPC ?? "https://s.altnet.rippletest.net:51234";
 const CLI = process.env.CLI ?? "../../target/release/examples/cli";
@@ -229,13 +234,14 @@ async function main() {
     await expectRefusal("sidecar: sweep above the fees available", http("POST", `${S1}/sign`, { txs: [{ kind: "fee-sweep", tx: { ...sweepTx, Amount: String(expectedAccrued + 1) } }] }), /exceeds the/);
     await expectRefusal("sidecar: sweep to a non-treasury destination", http("POST", `${S1}/sign`, { txs: [{ kind: "fee-sweep", tx: { ...sweepTx, Destination: aliceXrpl.address } }] }), /not the treasury/);
     const treasuryBefore = Number((await client.request({ command: "account_info", account: config.treasury, ledger_index: "validated" })).result.account_data.Balance);
-    const sw = await http("POST", `${C}/fees/sweep`, {});
+    await expectRefusal("sweep without the operator token", http("POST", `${C}/fees/sweep`, {}), /operator token/);
+    const sw = await http("POST", `${C}/fees/sweep`, {}, { headers: { "x-operator-token": OPERATOR_TOKEN } });
     assert(sw.amount === expectedAccrued && sw.tx && sw.recorded === 4, `sweep ${JSON.stringify(sw)}`);
     link("fee sweep pool → treasury (2-of-3)", sw.tx);
     const treasuryAfter = Number((await client.request({ command: "account_info", account: config.treasury, ledger_index: "validated" })).result.account_data.Balance);
     assert(treasuryAfter - treasuryBefore === expectedAccrued, `treasury +${treasuryAfter - treasuryBefore} ≠ ${expectedAccrued}`);
     for (let i = 0; i <= 3; i++) { const f = await http("GET", `${q.nodeUrl(i)}/fees`); assert(f.swept === expectedAccrued && f.available === 0, `node ${i} after sweep ${JSON.stringify(f)}`); }
-    await expectRefusal("sweep again with nothing available", http("POST", `${C}/fees/sweep`, {}), /nothing to sweep/);
+    await expectRefusal("sweep again with nothing available", http("POST", `${C}/fees/sweep`, {}, { headers: { "x-operator-token": OPERATOR_TOKEN } }), /nothing to sweep/);
     step("protocol fees: accrued identically on all nodes, swept to the treasury 2-of-3, sidecars refused excess and misdirected sweeps", { accruedDrops: expectedAccrued });
 
     // ---- 4. reveal via the coordinator

@@ -6,6 +6,7 @@
 // basePort+100+i, coordinator basePort+200. Writes common.env, node-<i>.env, signer-<i>.env,
 // coordinator.env. Key files stay where setup-pool put them (0600); only their paths are written.
 import { readFileSync, writeFileSync, mkdirSync } from "node:fs";
+import { randomBytes } from "node:crypto";
 
 const [configPath, envDir, dataDir, basePortArg, xrplRpcArg, xrplWsArg] = process.argv.slice(2);
 // Optional boundary screening for every node: SCREENING_LIST (file path on the host) and
@@ -34,7 +35,7 @@ write("common.env", { POOL: config.pool, SINK: config.sink, QUORUM: config.quoru
 for (let i = 0; i <= n; i++) write(`node-${i}.env`, { LISTEN: `127.0.0.1:${basePort + i}`, STATE: `${dataDir}/node${i}.verifier-state.json` });
 for (let i = 1; i <= n; i++) write(`signer-${i}.env`, { PORT: basePort + 100 + i, NODE_URL: nodeUrl(i), KEY_FILE: config.signers[i - 1].keyFile, MAX_FEE_DROPS: 5000 });
 // The coordinator's SIGNERS are sidecar URLs (it overrides common.env's SIGNERS, which the nodes use as addresses).
-write("coordinator.env", { PORT: basePort + 200, NODE_URL: nodeUrl(0), NODES: Array.from({ length: n + 1 }, (_, i) => nodeUrl(i)).join(","), SIGNERS: Array.from({ length: n }, (_, i) => signerUrl(i + 1)).join(","), XRPL_WS: xrplWs });
+write("coordinator.env", { OPERATOR_TOKEN: randomBytes(32).toString("hex"), PORT: basePort + 200, NODE_URL: nodeUrl(0), NODES: Array.from({ length: n + 1 }, (_, i) => nodeUrl(i)).join(","), SIGNERS: Array.from({ length: n }, (_, i) => signerUrl(i + 1)).join(","), XRPL_WS: xrplWs });
 // The demo wallet service behind the UI prototype (port basePort+250), syncing from the coordinator.
 write("wallet.env", { LISTEN: `127.0.0.1:${basePort + 250}`, DIR: `${dataDir.replace(/\/quorum$/, "")}/wallets`, COORDINATOR_URL: `http://127.0.0.1:${basePort + 200}` });
 console.log(`rendered ${envDir}: common.env, node-0..${n}.env, signer-1..${n}.env, coordinator.env (coordinator on 127.0.0.1:${basePort + 200}), wallet.env (demo wallet service on 127.0.0.1:${basePort + 250})`);

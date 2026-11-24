@@ -153,6 +153,9 @@ cargo test --workspace                       # 29 tests; cargo llvm-cov reports 
 cargo run --release --example demo           # offline walk-through of the v2 flow
 cargo build --release --example cli && cd e2e/testnet && npm install && \
   CLI=../../target/release/examples/cli npm run e2e    # the demo on XRPL testnet, 2-of-3 quorum
+# Fuzz harnesses (libFuzzer, nightly): what the ledger and the internet can hand the core and the node
+(cd core && cargo +nightly fuzz run memo_decode -- -max_total_time=120)         # also record_json, snapshot_restore, sighash_ctx
+(cd backend/node && cargo +nightly fuzz run pof_challenge -- -max_total_time=120) # also address_canonical, pof_ledger_objects
 ```
 
 ## License

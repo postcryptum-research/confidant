@@ -1,0 +1,39 @@
+[package]
+name = "confidant-node-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2021"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+serde_json = "1"
+
+[dependencies.confidant-node]
+path = ".."
+
+# Standalone: not a member of the repository workspace (see the root Cargo.toml `exclude`).
+[workspace]
+
+[[bin]]
+name = "address_canonical"
+path = "fuzz_targets/address_canonical.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "pof_challenge"
+path = "fuzz_targets/pof_challenge.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "pof_ledger_objects"
+path = "fuzz_targets/pof_ledger_objects.rs"
+test = false
+doc = false
+bench = false

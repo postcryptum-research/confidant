@@ -1,0 +1,47 @@
+[package]
+name = "confidant-core-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2021"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+serde_json = "1"
+hex = "0.4"
+
+[dependencies.confidant-core]
+path = ".."
+
+# Standalone: not a member of the repository workspace (see the root Cargo.toml `exclude`).
+[workspace]
+
+[[bin]]
+name = "memo_decode"
+path = "fuzz_targets/memo_decode.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "record_json"
+path = "fuzz_targets/record_json.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "snapshot_restore"
+path = "fuzz_targets/snapshot_restore.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "sighash_ctx"
+path = "fuzz_targets/sighash_ctx.rs"
+test = false
+doc = false
+bench = false

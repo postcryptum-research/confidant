@@ -27,7 +27,17 @@ async fn main() {
     if !dir.split('/').any(|c| c == "data") {
         die("--dir must live under a data/ directory (wallet files hold spending keys)");
     }
-    let store = Arc::new(Store::open(&dir, HttpLog::new(&coordinator)).unwrap_or_else(|e| die(e)));
+    // Most wallets this demo service will hold (WALLET_CAP, default 1000): an open ingress
+    // must not be able to fill the disk with key files.
+    let wallet_cap: usize = std::env::var("WALLET_CAP")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(confidant_wallet::store::DEFAULT_CAPACITY);
+    let store = Arc::new(
+        Store::open(&dir, HttpLog::new(&coordinator))
+            .map(|s| s.with_capacity(wallet_cap))
+            .unwrap_or_else(|e| die(e)),
+    );
     eprintln!(
         "confidant-wallet: {} wallets in {dir}, syncing from {coordinator}, listening on {listen} — WARNING: this host holds the demo wallets' spending keys (demo service; in production run it on the holder's machine)",
         store.len()

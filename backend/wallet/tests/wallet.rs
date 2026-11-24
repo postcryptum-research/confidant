@@ -299,3 +299,114 @@ async fn http_surface_round_trips_and_maps_errors() {
     );
     std::fs::remove_dir_all(&dir).ok();
 }
+
+/// Like `call`, but a raw body and content type (invalid UTF-8, truncated JSON, oversized bodies).
+async fn call_raw(
+    app: &axum::Router,
+    method: &str,
+    path: &str,
+    content_type: &str,
+    body: Vec<u8>,
+) -> StatusCode {
+    let req = Request::builder()
+        .method(method)
+        .uri(path)
+        .header("content-type", content_type)
+        .body(Body::from(body))
+        .unwrap();
+    app.clone().oneshot(req).await.unwrap().status()
+}
+
+/// Ticket "Self-security", part 3: the demo wallet service is reachable from the internet behind
+/// nginx. It refuses to grow past its capacity (no disk filled with key files), and every route
+/// takes malformed, mistyped, oversized and invalid-UTF-8 input without a panic or a 5xx.
+#[tokio::test]
+async fn capacity_is_enforced_and_the_http_surface_survives_malformed_input() {
+    let log = FakeLog::default();
+    let dir = tmp("cap");
+    let store = Store::open(dir.join("data").join("wallets"), log.clone())
+        .unwrap()
+        .with_capacity(2);
+    assert_eq!(store.capacity(), 2);
+    assert_eq!(
+        Store::open(dir.join("x"), log.clone())
+            .unwrap()
+            .with_capacity(0)
+            .capacity(),
+        1
+    );
+    store.create().unwrap();
+    store.create().unwrap();
+    assert!(matches!(store.create(), Err(StoreError::Full(2))));
+    assert_eq!(
+        store.len(),
+        2,
+        "a refused create leaves the store as it was"
+    );
+    let full = http::router(Arc::new(store));
+    let (status, v) = call(&full, "POST", "/wallets", None).await;
+    assert_eq!(
+        status,
+        StatusCode::SERVICE_UNAVAILABLE,
+        "the one expected 5xx: the store is full"
+    );
+    assert!(v["error"].as_str().unwrap().contains("full"));
+    // The malformed-input sweep runs against a store with room (a create ignores its body, so
+    // every POST /wallets below makes a wallet).
+    let roomy = Store::open(dir.join("roomy"), log.clone())
+        .unwrap()
+        .with_capacity(1_000);
+    let app = http::router(Arc::new(roomy));
+    let (_, health_before) = call(&app, "GET", "/health", None).await;
+    let posts = [
+        "/wallets",
+        "/wallets/0123456789abcdef0123456789abcdef/sync",
+        "/wallets/0123456789abcdef0123456789abcdef/shield",
+        "/wallets/0123456789abcdef0123456789abcdef/transfer",
+        "/wallets/0123456789abcdef0123456789abcdef/unshield",
+        "/wallets/0123456789abcdef0123456789abcdef/pof",
+        "/wallets/%ff%fe/shield",
+    ];
+    let deep = format!("{}{}", "[".repeat(3_000), "]".repeat(3_000));
+    let bodies: Vec<(&str, Vec<u8>)> = vec![
+        ("empty", Vec::new()),
+        ("null", b"null".to_vec()),
+        ("array", b"[]".to_vec()),
+        ("string", b"\"x\"".to_vec()),
+        ("truncated", b"{\"amount\": 1".to_vec()),
+        ("invalid utf-8", vec![0xff, 0xfe, b'{', b'}']),
+        ("deeply nested", deep.into_bytes()),
+        ("wrong types", br#"{"amount":"a","destination":[],"outputs":"no","challenge":5}"#.to_vec()),
+        ("huge numbers", br#"{"amount":18446744073709551615,"outputs":[{"recipient":"","amount":18446744073709551615}],"destination":"r","challenge":{"borrower":"","lender":"","ledgerIndex":18446744073709551615,"expiry":0}}"#.to_vec()),
+        ("oversized 100 KiB", vec![b'['; 100 * 1024]),
+    ];
+    for path in posts {
+        for (name, body) in &bodies {
+            let status = call_raw(&app, "POST", path, "application/json", body.clone()).await;
+            assert!(
+                !status.is_server_error(),
+                "{path} with {name} body: {status}"
+            );
+        }
+        let status = call_raw(&app, "POST", path, "text/plain", b"{}".to_vec()).await;
+        assert!(
+            !status.is_server_error(),
+            "{path} with a non-JSON content type: {status}"
+        );
+    }
+    for path in [
+        "/wallets/nope",
+        "/wallets/",
+        "/wallets/%00",
+        "/health?x=1",
+        "/nope",
+    ] {
+        let status = call_raw(&app, "GET", path, "application/json", Vec::new()).await;
+        assert!(!status.is_server_error(), "GET {path}: {status}");
+    }
+    // Creates during the sweep are by design (POST /wallets ignores its body); the service is
+    // still healthy and every wallet it made is a real one.
+    let (status, health_after) = call(&app, "GET", "/health", None).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(health_after["ok"], health_before["ok"]);
+}

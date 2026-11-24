@@ -1,6 +1,8 @@
 [workspace]
 resolver = "2"
 members = ["core", "backend/node", "backend/wallet", "frontend/wasm"]
+# libFuzzer harnesses (nightly, `cargo fuzz`), standalone so the stable workspace build never touches them.
+exclude = ["core/fuzz", "backend/node/fuzz"]
 
 [workspace.package]
 edition = "2021"
@@ -21,6 +23,8 @@ serde_json = "1"
 hex = "0.4"
 thiserror = "2"
 axum = "0.8"
+tower = { version = "0.5", features = ["limit"] }
+tower-http = { version = "0.6", features = ["timeout", "catch-panic"] }
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "sync"] }
 sha2 = "0.10"
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
