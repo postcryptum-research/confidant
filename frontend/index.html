@@ -120,6 +120,10 @@
   main a, footer a, button.link { color: var(--muted); text-decoration: underline; text-decoration-color: var(--line-2); text-underline-offset: 3px; }
   main a:hover, footer a:hover, button.link:hover { color: var(--text); text-decoration-color: currentColor; }
   .wrap { max-width: 860px; margin: 0 auto; padding: 0 20px 48px; }
+  /* A site-wide notice shown only when the demo pool is unreachable (e.g. the public XRPL testnet has
+     reset and the pool is being re-provisioned): a calm amber bar, not a raw per-field error. */
+  .pool-banner { background: color-mix(in srgb, var(--warn) 16%, var(--bg)); color: var(--fg); border-bottom: 1px solid color-mix(in srgb, var(--warn) 45%, transparent); padding: 12px 20px; text-align: center; font-size: 14px; line-height: 1.45; }
+  .pool-banner b { color: var(--warn); }
   .layout { display: grid; gap: 16px; margin-top: 16px; }
 
   /* Pool strip: the public numbers in one band under the header, bottoms of all numbers on one line */
@@ -652,6 +656,7 @@
 </style>
 </head>
 <body>
+<div class="pool-banner" id="pool-banner" role="status" hidden></div>
 <div class="wrap">
   <header class="bar">
     <div class="brand">
@@ -1078,7 +1083,17 @@
       // poolExcess is the node's own read of balance − backing (null when the ledger is unreadable).
       $("pool-split").textContent = f.poolExcess == null ? "Pool account balance: ledger not readable"
         : `Pool account ${fmt(f.outstandingBacking + f.poolExcess)} = ${fmt(f.outstandingBacking)} shielded + ${fmt(f.poolExcess)} float and unswept fees`;
-    } catch { $("st-pool-big").textContent = "—"; $("pool-split").textContent = ""; }
+      // poolExcess null = the node cannot read the pool account on the ledger (the public testnet
+      // periodically resets and wipes every account). Say so once, calmly, instead of leaving raw
+      // "ledger not readable" / "account not found" errors scattered across the page.
+      poolBanner(f.poolExcess == null);
+    } catch { $("st-pool-big").textContent = "—"; $("pool-split").textContent = ""; poolBanner(true); }
+  }
+  // Shows/hides the site-wide notice when the demo pool is unreachable. Never shown in demo mode.
+  function poolBanner(down) {
+    const b = $("pool-banner"); if (!b) return;
+    if (down && !DEMO) { b.innerHTML = `<b>The demo pool is temporarily unavailable.</b> The public XRPL testnet periodically resets and wipes every account; when it does, the pool is re-provisioned and shielding, balances and proofs are paused until it is back. This is a testnet demo.`; b.hidden = false; }
+    else b.hidden = true;
   }
 
   // ---- flows ------------------------------------------------------------------------------
