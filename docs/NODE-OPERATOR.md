@@ -157,3 +157,32 @@ hour × the owner reserve, plus fees) cannot hit `tecINSUF_RESERVE` mid-demo, an
 unit; the app then says what is missing before any payment, and the team's key saved in the browser (the under-the-hood
 page's fold) can still issue.
 
+
+## Recovering after a public XRPL testnet reset
+
+The public testnet resets periodically and wipes every account — the pool, sink, treasury and issuer all
+cease to exist. The nodes' local state survives, so the UI still shows private balances from the log, but
+every ledger read fails: `GET /api/fees` returns `poolExcess: null`, the app shows a *pool temporarily
+unavailable* banner, and deposits/shields/proofs cannot work (the pool account has no SignerList, no
+funds, no sequence). The app's banner is driven by that `poolExcess == null` signal; the workstation
+monitor (off-repo) alerts on it.
+
+Recovery is a **fresh start**, not a restore (the old bundles are gone with their accounts). One command
+on the host:
+
+```bash
+sudo bash /srv/confidant/repo/backend/deploy/reprovision.sh   # backs up first; prints the new addresses + rollback dir
+```
+
+It faucet-funds a new pool/sink/treasury, installs a `k-of-N` SignerList and disables the master key,
+faucet-funds a new KYC issuer, installs the keys `0600`, clears the node state, rewrites `common.env`
+(keeping screening, proof-of-funds and quorum settings), restarts the services and verifies the pool is
+on the ledger. Then seed a synthetic anonymity set (honest label: faucet-funded, not real users), which
+now obtains the entry credential per funder from the issuer service so it works under the gate:
+
+```bash
+cd /srv/confidant/repo/backend/quorum
+COORDINATOR_URL=http://127.0.0.1:7900 CLI=../../target/release/examples/cli ISSUER_URL=http://127.0.0.1:7960 npm run prepopulate
+```
+
+The previous state is backed up under `/srv/confidant/reprovision-backup/<ts>` for rollback.
