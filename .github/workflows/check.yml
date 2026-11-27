@@ -33,7 +33,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      # Pinned, not @stable: llvm-cov's line counting shifts between rustc releases, so the 100% gate
+      # must run on a fixed toolchain or it flaps red on an unrelated toolchain bump (it did on the
+      # stable that shipped after 1.95). Bump this deliberately when revalidating coverage.
+      - uses: dtolnay/rust-toolchain@1.95.0
         with:
           components: llvm-tools-preview
       - uses: taiki-e/install-action@cargo-llvm-cov
