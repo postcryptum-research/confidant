@@ -5,7 +5,9 @@
 // faucet — it makes the demo pool look lived-in; it is not evidence of real users.
 //
 //   COORDINATOR_URL=http://host:8787 CLI=../../target/release/examples/cli HOLDERS=8 DENOMS=5,10,25 TRANSFERS=4 node prepopulate.mjs
-//   env: XRPL_WS (testnet default), DIR (../../data/prepop-<ts>), POOL (optional; read from /config)
+//   env: XRPL_WS (testnet default), DIR (../../data/prepop-<ts>), POOL (optional; read from /config),
+//        ISSUER_URL (the demo issuer service, default http://127.0.0.1:7960) — when the pool has a
+//        credential gate, each funder gets the entry credential from it and accepts it before depositing.
 
 import { execFileSync } from "node:child_process";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
@@ -20,6 +22,9 @@ const DENOMS = (process.env.DENOMS ?? "5,10,25").split(",").map((x) => xrpToDrop
 const TRANSFERS = Number(process.env.TRANSFERS ?? Math.floor(HOLDERS / 2));
 const DIR = process.env.DIR ?? `../../data/prepop-${new Date().toISOString().replace(/[:.]/g, "-")}`;
 const EXPLORER = "https://testnet.xrpl.org/transactions";
+// Where the demo issuer service answers (for the credential gate, feature A): each funder must hold the
+// entry credential before the pool accepts its deposit. Default: the local issuer on the host.
+const ISSUER_URL = (process.env.ISSUER_URL ?? "http://127.0.0.1:7960").replace(/\/$/, "");
 mkdirSync(DIR, { recursive: true });
 const t0 = Date.now();
 const log = (msg, extra = "") => console.log(`[${String(Date.now() - t0).padStart(6)} ms] ${msg}`, extra);
@@ -52,6 +57,13 @@ try {
         try { funder = (await client.fundWallet()).wallet; } catch (e) { log(`faucet busy (${e.message?.slice(0, 60)}), retrying in ${5 * (a + 1)} s`); await sleep(5000 * (a + 1)); }
       }
       if (!funder) throw new Error("faucet unavailable");
+      // Credential gate (feature A): the depositor must hold an accepted entry credential, or the pool
+      // refuses the shield (403). Get it from the demo issuer service and accept it with the funder's key.
+      if (cfg.credential?.issuer) {
+        await http("POST", `${ISSUER_URL}/issue`, { subject: funder.address });
+        const ca = await client.submitAndWait(funder.sign(await client.autofill({ TransactionType: "CredentialAccept", Account: funder.address, Issuer: cfg.credential.issuer, CredentialType: cfg.credential.type })).tx_blob);
+        if (ca.result.meta?.TransactionResult !== "tesSUCCESS") throw new Error(`CredentialAccept ${ca.result.meta?.TransactionResult}`);
+      }
       const w = wallet(name); const info = w("init");
       await sync();
       const built = w("build-shield", net, `${DIR}/${name}.shield.json`, LOG);
