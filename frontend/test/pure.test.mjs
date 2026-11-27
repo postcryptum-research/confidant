@@ -127,3 +127,14 @@ test("every link to another page opens in a new tab (the app stays where the use
     }
   }
 });
+
+test("index.html shows the pool-down banner only via the live status refresh (not in demo)", () => {
+  const html = page("index.html");
+  // The notice element and its driver must stay wired: the banner is toggled from refreshStatus by the
+  // node's own poolExcess-null signal (the ledger-unreadable / testnet-reset symptom), never hard-coded on.
+  assert.match(html, /id="pool-banner"/, "the banner element is present");
+  const js = inline(html);
+  assert.match(js, /function poolBanner\(/, "poolBanner is defined");
+  assert.match(js, /poolBanner\(f\.poolExcess == null\)/, "refreshStatus drives the banner from poolExcess");
+  assert.match(js, /if \(down && !DEMO\)/, "the banner never shows in demo mode");
+});
