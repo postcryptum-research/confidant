@@ -13,13 +13,17 @@ export const MEMO_SHIELD = "confidant/shield";
 export const MAX_BODY_BYTES = 1 << 20;
 export function serve(port, routes) {
   const server = createServer(async (req, res) => {
-    const url = new URL(req.url, "http://localhost");
-    const key = `${req.method} ${url.pathname}`;
-    const handler = routes[key];
     const send = (status, body) => {
       res.writeHead(status, { "content-type": "application/json" });
       res.end(JSON.stringify(body));
     };
+    // Parse the request target defensively: a malformed one (e.g. "//", "/\", "http://[") makes the
+    // WHATWG URL parser throw, and an unguarded throw here would be an unhandled rejection that stops
+    // the process. An unparseable target is a client error → 400, the service stays up.
+    let url;
+    try { url = new URL(req.url, "http://localhost"); } catch { return send(400, { error: "malformed request target" }); }
+    const key = `${req.method} ${url.pathname}`;
+    const handler = routes[key];
     if (!handler) return send(404, { error: `no route ${key}` });
     try {
       let body = null;
@@ -28,7 +32,13 @@ export function serve(port, routes) {
         // make the service hold arbitrary bytes (the nodes cap their own at 256 KiB).
         const chunks = []; let size = 0;
         for await (const c of req) { size += c.length; if (size > MAX_BODY_BYTES) throw refuse(413, `body over ${MAX_BODY_BYTES} bytes`); chunks.push(c); }
-        body = chunks.length ? JSON.parse(Buffer.concat(chunks).toString("utf8")) : {};
+        if (chunks.length) {
+          // A client error (bad JSON, or a non-object body a handler would fail to destructure) is a
+          // 400 with a fixed message — never a 500 that echoes the parser's internals.
+          try { body = JSON.parse(Buffer.concat(chunks).toString("utf8")); }
+          catch { throw refuse(400, "body is not valid JSON"); }
+          if (body === null || typeof body !== "object" || Array.isArray(body)) throw refuse(400, "body must be a JSON object");
+        } else body = {};
       }
       const out = await handler(body, url, req);
       send(200, out);
